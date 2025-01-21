@@ -1,0 +1,15 @@
+ckpt_dir: 
+  - /nobackup/qinghao/lingua/373_baseline_1024/checkpoints/0000128000
+  - /nobackup/qinghao/lingua/373_moe_1024/checkpoints/0000128000
+  - /nobackup/qinghao/lingua/373_pkplus_1024_new/checkpoints/0000128000
+num_samples: 4
+input_length: 4096
+output_length: 32
+batch_size: 1
+generator:
+  max_tokens: 8192
+  dtype: bf16
+  temperature: 0
+  top_p: 1
+
+

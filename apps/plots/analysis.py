@@ -65,7 +65,7 @@ def get_merged_df(path):
 
 
 # %% Example usage
-df = get_merged_df("/path/to/metrics.jsonl")
+df = get_merged_df("/nobackup/qinghao/temp/metrics.jsonl")
 fig = px.line(
     df,
     x="metrics/global_step",

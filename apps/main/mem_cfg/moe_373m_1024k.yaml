@@ -1,15 +1,17 @@
 # Template config, need to change dump_dir, data.root_dir and data.tokenizer.path
 
-dump_dir: /nobackup/qinghao/temp
-name: "debug"
-steps: 1000
-probe_freq: 100
+dump_dir: /nobackup/qinghao/lingua/373_moe_1024
+name: "373_moe_1024"
+steps: 128_000
+probe_freq: null
 seed: 777
 optim:
-    lr: 3e-4
-    warmup: 2000
-    lr_min_ratio: 0.000001
-    clip: 10.0
+    lr: 1e-4
+    warmup: 4000
+    lr_min_ratio: 0.01
+    clip: 1.0
+    scheduler: linear
+    annealing_step: 10000
 
 distributed:
     fsdp_type: full_shard
@@ -18,33 +20,42 @@ distributed:
     matmul_allow_tf32: false
     selective_activation_checkpointing: false
     tp_size: 1
+    memory_parallel_size: 1
 
 model:
     dim: 1024
-    n_layers: 8
-    n_heads: 8
+    n_layers:  24
+    n_heads: 16
+    rope_theta: 500000.0
+    moe_args: 
+        is_enabled: True
+        layers:  "0,2,4,6,8,10,12,14,16,18,20,22"
+        ffn_dim: 4096
+        num_experts: 8
+        top_k: 1
 
 data:
     root_dir: /nobackup/qinghao/dataset/dclm-dedup-shuffled
     sources:
         dclm_baseline_1.0: 1.0
-    batch_size: 32
+    batch_size: 8
     prefetch_size: 64
-    seq_len: 2048
+    seq_len: 4096
     n_views: 2
     load_async: true
     tokenizer:
-        name: bytes
+        name: tiktoken
+        path: /nobackup/qinghao/huggingface/Meta-Llama-3-8B/original/tokenizer.model
 
 profiling:
     run: true
 
 checkpoint:
     dump:
-        every: 100
+        every: 10000
         keep: 1
     eval:
-        every: 100
+        every: 128_000
         keep: 1
 
 logging:
@@ -59,8 +70,6 @@ eval:
     harness:
         tasks:
             - hellaswag
-            # - piqa
-            # - task: nq_open
-            #   num_fewshot: 5
-    validation:
-        max_steps: 100
+            - piqa
+            - task: nq_open
+              num_fewshot: 5

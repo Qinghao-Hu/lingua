@@ -60,6 +60,8 @@ class DistributedArgs:
         1  # How many times to replicate the model weight. Typically number of nodes.
     )
     tp_size: int = 1
+    memory_parallel_size: int = 1  # Memory Layers Args
+    checkpoint_each_layer: bool = False  # Memory Layers Args
     selective_activation_checkpointing: bool = False
     compile: bool = False
     fsdp_type: str = "no_shard"
@@ -88,7 +90,7 @@ class EnvironmentArgs:
     TORCH_NCCL_AVOID_RECORD_STREAMS: str = "1"
     # increasing NCCL timeout time before having some NCCL error 22 should give a 16s timeout
     NCCL_IB_TIMEOUT: str = "22"
-    NCCL_DEBUG: str = "INFO"
+    NCCL_DEBUG: str = "WARN"
     TORCH_NCCL_ASYNC_ERROR_HANDLING: str = "1"
 
 
@@ -321,6 +323,9 @@ def check_model_value_range(
         if torch.isnan(param).any() or torch.isinf(param).any():
             logger.warning(f"Model parameter {name} contains NaN or Inf")
 
+        if param.numel() == 0:
+            continue
+
         param_range = param.max() - param.min()
         param_std = param.std()
 
@@ -413,6 +418,20 @@ def parallelize_model(
     param_dtype = dict(fp32=torch.float32, fp16=torch.float16, bf16=torch.bfloat16)[
         distributed_args.model_dtype
     ]
+
+    if distributed_args.memory_parallel_size > 1:
+        assert distributed_args.tp_size == 1
+        assert distributed_args.dp_shard == 1
+        memory_mesh_names = ["dp_replicate", "memory_parallel"]
+        n_mem_replicate = distributed_args.dp_replicate // distributed_args.memory_parallel_size
+        memory_mesh_shape = [n_mem_replicate, distributed_args.memory_parallel_size]
+        memory_mesh = init_device_mesh("cuda", mesh_shape=memory_mesh_shape, mesh_dim_names=memory_mesh_names)
+    else:
+        memory_mesh = device_mesh["dp_replicate"]
+    for layer in model.layers:
+        if hasattr(layer.feed_forward, "mp_parallelize"):
+            layer.feed_forward.mp_parallelize(memory_mesh, model_args, distributed_args, param_dtype)
+
     if (
         distributed_args.fsdp_type == "full_shard"
         or distributed_args.fsdp_type == "no_shard"
@@ -466,6 +485,14 @@ def parallelize_model(
                 get_default_policy(no_recompute_ops),
             ),
         )
+
+    if distributed_args.checkpoint_each_layer:
+        assert not distributed_args.selective_activation_checkpointing
+        for i in range(len(model.layers)):
+            # Do not checkpoint around layers with mp_parallelize
+            can_checkpoint = not hasattr(model.layers[i].feed_forward, "mp_parallelize")
+            if can_checkpoint:
+                model.layers[i] = checkpoint_wrapper(model.layers[i])
 
     if distributed_args.compile:
         torch._dynamo.config.cache_size_limit = (

@@ -1,6 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, Union, Tuple
 
@@ -15,6 +15,9 @@ from torch.nn.attention.flex_attention import (
 )
 
 from lingua import probe
+
+from lingua.product_key.memory import HashingMemory, ProductKeyArgs
+from lingua.moe import MoEArgs, SparseMoeBlock
 
 flex_attention_comp = torch.compile(flex_attention)
 
@@ -46,6 +49,9 @@ class BaseTransformerArgs:
     init_std_factor: str = "disabled"
 
     max_seqlen: int = 1024
+
+    productkey_args: ProductKeyArgs = field(default_factory=ProductKeyArgs)
+    moe_args: MoEArgs = field(default_factory=MoEArgs)
 
 
 def cross_entropy(pred, target, **kwargs):
@@ -483,7 +489,8 @@ class FeedForward(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, args: BaseTransformerArgs):
+
+    def __init__(self, args: BaseTransformerArgs, layer: int):
         super().__init__()
 
         assert (args.head_dim is not None) or (
@@ -503,12 +510,38 @@ class TransformerBlock(nn.Module):
             n_kv_heads=self.n_kv_heads,
             rope_theta=args.rope_theta,
         )
-        self.feed_forward = FeedForward(
-            dim=args.dim,
-            hidden_dim=4 * args.dim,
-            multiple_of=args.multiple_of,
-            ffn_dim_multiplier=args.ffn_dim_multiplier,
-        )
+
+        pk_layers = [int(s) for s in args.productkey_args.layers.split(",") if len(s) > 0]
+        moe_layers = [int(s) for s in args.moe_args.layers.split(",") if len(s) > 0]
+        if args.productkey_args.is_enabled and layer in pk_layers:
+            self.feed_forward = HashingMemory(
+                input_dim=args.dim,
+                output_dim=args.dim,
+                mem_n_keys=args.productkey_args.mem_n_keys,
+                mem_heads=args.productkey_args.mem_heads,
+                mem_knn=args.productkey_args.mem_knn,
+                mem_share_values=args.productkey_args.mem_share_values,
+                mem_k_dim=args.productkey_args.mem_k_dim,
+                mem_v_dim=args.productkey_args.mem_v_dim,
+                swilu_projection=args.productkey_args.swilu_projection,
+                value_fixed_lr=args.productkey_args.value_fixed_lr,
+                mem_gated=args.productkey_args.mem_gated,
+                peer_variant=args.productkey_args.peer_variant,
+            )
+        elif args.moe_args.is_enabled and layer in moe_layers:
+            self.feed_forward = SparseMoeBlock(
+                hidden_dim=args.dim,
+                ffn_dim=args.moe_args.ffn_dim,
+                num_experts=args.moe_args.num_experts,
+                top_k=args.moe_args.top_k,
+            )
+        else:
+            self.feed_forward = FeedForward(
+                dim=args.dim,
+                hidden_dim=4 * args.dim,
+                multiple_of=args.multiple_of,
+                ffn_dim_multiplier=args.ffn_dim_multiplier,
+            )
         self.attention_norm = RMSNorm(args.dim, eps=args.norm_eps)
         self.ffn_norm = RMSNorm(args.dim, eps=args.norm_eps)
 
@@ -553,8 +586,8 @@ class BaseTransformer(nn.Module):
         )
 
         self.layers = nn.ModuleList()
-        for _ in range(args.n_layers):
-            self.layers.append(TransformerBlock(args))
+        for l in range(args.n_layers):
+            self.layers.append(TransformerBlock(args, l))
 
     def forward(
         self,

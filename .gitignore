@@ -3,3 +3,7 @@
 *.ipynb
 slurm-*.out
 wandb
+
+apps/plots/render_out
+playground/
+logs/

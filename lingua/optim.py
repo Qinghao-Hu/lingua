@@ -7,6 +7,7 @@ import math
 import logging
 from torch import nn
 from torch.optim import AdamW, lr_scheduler
+from itertools import groupby
 
 logger = logging.getLogger()
 
@@ -144,8 +145,20 @@ def build_lr_fn(args: OptimArgs, n_steps: int):
 
 def build_optimizer(model: nn.Module, args: OptimArgs, n_steps: int):
     logger.info("Starting build of optimizer...")
-    optimizer = AdamW(
+    pgroups = []
+    for fixed_lr, p in groupby(
         model.parameters(),
+        key=lambda p: getattr(p, "fixed_lr", None),
+    ):
+        pgroups.append(
+            {
+                "params": list(p),
+                "lr": fixed_lr if fixed_lr else args.lr,
+            }
+        )
+
+    optimizer = AdamW(
+        pgroups,  # model.parameters(),
         lr=args.lr,
         betas=(args.beta1, args.beta2),
         weight_decay=args.weight_decay,

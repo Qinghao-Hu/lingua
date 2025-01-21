@@ -15,11 +15,6 @@ import matplotlib.animation as animation
 import matplotlib
 from matplotlib import rc
 from multiprocessing import Pool
-import argparse
-
-parser = argparse.ArgumentParser()
-parser.add_argument("probe_folders", help="contains a `probe` folder", nargs="+")
-args = parser.parse_args()
 
 rc("animation", html="jshtml")
 matplotlib.rcParams["animation.embed_limit"] = 2**128
@@ -27,15 +22,21 @@ matplotlib.rcParams["animation.embed_limit"] = 2**128
 DEFAULT_QUANTILES = [0.001, 0.01, 0.05, 0.1, 0.3, 0.5, 0.7, 0.9, 0.95, 0.99, 0.999]
 DATAS_PER_FILE = {}
 datas = []
-NUM_LAYERS = 0  # TODO: Deduce from files
+NUM_LAYERS = 8  # TODO: Deduce from files
 
-for f in args.probe_folders:
+probe_folders = [
+    "/nobackup/qinghao/temp",
+]
+
+for f in probe_folders:
+    print(f)
     name = Path(f).name
     print("Loading ", name)
     file = None
     for probe_test in ["probe/probe.0.jsonl", "probe.json"]:
         if (Path(f) / probe_test).exists():
             file = Path(f) / probe_test
+        print(file)
     assert file is not None, "Could not find probe json file"
     data = file.read_text()
     datas = []
@@ -49,15 +50,15 @@ for f in args.probe_folders:
     # Assumes layers have the form
     # `FSDP.module.blocks.{LAYER_NUM}...`
 
-    NUM_LAYERS = max(
-        NUM_LAYERS,
-        1
-        + max(
-            int(k.split("FSDPTransformer.layers.", 1)[1].split(".")[0])
-            for k in datas[0]["data"].keys()
-            if k.startswith("FSDPTransformer.layers.") and k.endswith("::w")
-        ),
-    )
+    # NUM_LAYERS = max(
+    #     NUM_LAYERS,
+    #     1
+    #     + max(
+    #         int(k.split("FSDPTransformer.layers.", 1)[1].split(".")[0])
+    #         for k in datas[0]["data"].keys()
+    #         if k.startswith("FSDPTransformer.layers.") and k.endswith("::w")
+    #     ),
+    # )
     for d in datas:
         d["meta"]["it"] = d["meta"]["global_step"]
     assert NUM_LAYERS > 0, "Couldn't deduce the model depth"
@@ -191,7 +192,7 @@ def plot_depth_distr_time(layer_fmt, to_file=None, runs=None, subsample=8):
         Path(to_file).write_text(ani.to_jshtml())
 
 
-OUTPUT_FOLDER_NAME = "_AND_".join([Path(f).name for f in args.probe_folders])
+OUTPUT_FOLDER_NAME = "_AND_".join([Path(f).name for f in probe_folders])
 RENDER_OUT_PATH = (Path("render_out") / OUTPUT_FOLDER_NAME).absolute()
 RENDER_OUT_PATH.mkdir(parents=True, exist_ok=True)
 
@@ -238,12 +239,12 @@ def _render_res():
 
 
 def _render_to_file(linear_layer: str):
-    if linear_layer == "__res__":
-        return _render_res()
-    if linear_layer == "__attn__":
-        return _render_attn()
-    if f"{linear_layer.format(0)}::out" not in datas[0]["data"].keys():
-        return
+    # if linear_layer == "__res__":
+    #     return _render_res()
+    # if linear_layer == "__attn__":
+    #     return _render_attn()
+    # if f"{linear_layer.format(0)}::out" not in datas[0]["data"].keys():
+    #     return
     print("## ", linear_layer)
     to_file = linear_layer.split("{}", 1)[-1].replace(".", "") + ".html"
     to_file = RENDER_OUT_PATH / to_file
@@ -262,19 +263,19 @@ with Pool(10) as p:
         _render_to_file,
         [
             "__attn__",
-            # DINO
-            "FSDP.module.blocks.{}.mlp.fc1",
-            "FSDP.module.blocks.{}.mlp.fc2",
-            "FSDP.module.blocks.{}.mlp.qkv",
-            "FSDP.module.blocks.{}.mlp.proj",
+            # # DINO
+            # "FSDP.module.blocks.{}.mlp.fc1",
+            # "FSDP.module.blocks.{}.mlp.fc2",
+            # "FSDP.module.blocks.{}.mlp.qkv",
+            # "FSDP.module.blocks.{}.mlp.proj",
             # linguas
-            "FSDPTransformer.layers.{}.attention.wq",
-            "FSDPTransformer.layers.{}.attention.wk",
-            "FSDPTransformer.layers.{}.attention.wv",
-            "FSDPTransformer.layers.{}.attention.wo",
-            "FSDPTransformer.layers.{}.feed_forward.w1",
-            "FSDPTransformer.layers.{}.feed_forward.w2",
-            "FSDPTransformer.layers.{}.feed_forward.w3",
+            "FSDPLMTransformer.layers.{}.attention.wq",
+            "FSDPLMTransformer.layers.{}.attention.wk",
+            "FSDPLMTransformer.layers.{}.attention.wv",
+            "FSDPLMTransformer.layers.{}.attention.wo",
+            "FSDPLMTransformer.layers.{}.feed_forward.w1",
+            "FSDPLMTransformer.layers.{}.feed_forward.w2",
+            "FSDPLMTransformer.layers.{}.feed_forward.w3",
             "__res__",
         ],
     )

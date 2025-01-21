@@ -39,6 +39,7 @@ from lingua.distributed import (
     get_device_mesh,
     get_is_master,
     get_world_size,
+    get_global_rank,
     parallelize_model,
     setup_env,
     setup_torch_distributed,
@@ -137,7 +138,7 @@ def validate_train_args(args: TrainArgs, output_size: int):
     assert args.dump_dir, "Dump dir not set"
 
     if args.checkpoint.path is None:
-        logger.info(f"Setting checkpoint path to {str(Path(args.dump_dir) / "checkpoints")}")
+        logger.info(f"Setting checkpoint path to {str(Path(args.dump_dir) / 'checkpoints')}")
         args.checkpoint.path = str(Path(args.dump_dir) / "checkpoints")
 
     for source in args.data.sources:
@@ -280,13 +281,13 @@ def train(args: TrainArgs):
             model.rope_embeddings.reset_parameters() # For RoPe initialization since it's a buffer it might not be loaded
         else:
             with torch.random.fork_rng(devices=[torch.cuda.current_device()]):
-                torch.manual_seed(args.model.seed)
+                torch.manual_seed(args.model.seed + get_global_rank())
                 model.init_weights()
         check_model_value_range(model, range=10.0, std=1.0)
 
         # log model size
 
-        logger.info(f"Model size: {model_param_count:,} total parameters")
+        logger.info(f"Model size: {model_param_count / 1e9:.3f} total parameters")
 
         gpu_memory_monitor = GPUMemoryMonitor("cuda")
         logger.info(
@@ -429,9 +430,15 @@ def train(args: TrainArgs):
             # optimizer step
             grad_norm = -1.0
             if train_state.acc_step == 0:
-                grad_norm = torch.nn.utils.clip_grad_norm_(
-                    model.parameters(), max_norm=args.optim.clip, foreach=True
-                )
+                # The PK value embeddings have their gradients normalized separately
+                non_pk_value_parameters = [p for p in model.parameters() if not hasattr(p, "pk_value_param")]
+                pk_value_parameters = [p for p in model.parameters() if hasattr(p, "pk_value_param")]
+                torch.nn.utils.clip_grad_norm_(pk_value_parameters, max_norm=args.optim.clip, foreach=True)
+                grad_norm = torch.nn.utils.clip_grad_norm_(non_pk_value_parameters, max_norm=args.optim.clip, foreach=True)
+
+                # grad_norm = torch.nn.utils.clip_grad_norm_(
+                #     model.parameters(), max_norm=args.optim.clip, foreach=True
+                # )
 
                 grad_norm = (
                     grad_norm.full_tensor() if isinstance(grad_norm, DTensor) else grad_norm

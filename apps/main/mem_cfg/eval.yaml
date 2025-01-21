@@ -1,0 +1,18 @@
+name: "debug_evals"
+ckpt_dir: /nobackup/qinghao/lingua/373_pkplus_1024_new/checkpoints/0000128000
+dump_dir: /nobackup/qinghao/lingua/373_pkplus_1024_eval
+generator:
+  max_tokens: 8192
+  dtype: bf16
+  temperature: 1.0
+  top_p: 0.95
+harness:
+  tasks:
+    - hellaswag
+    - piqa
+    - task: nq_open
+      num_fewshot: 5
+
+validation:
+  max_steps: 10
+
